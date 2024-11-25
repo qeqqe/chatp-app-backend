@@ -15,6 +15,8 @@ app.use(express.json());
 
 app.use(cors());
 
+const userSockets = new Map();
+
 const io = socketIo(server, {
   cors: {
     origin: "http://localhost:3000",
@@ -22,19 +24,63 @@ const io = socketIo(server, {
   },
 });
 
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      return next(new Error("Authentication required"));
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return next(new Error("User not found"));
+    }
+
+    socket.userId = user._id;
+    socket.username = user.username;
+    next();
+  } catch (error) {
+    next(new Error("Authentication error"));
+  }
+});
+
 const PORT = 3001;
 io.on("connection", (socket) => {
-  console.log(`User connected: ${socket.id}`);
-  socket.on("message", (message) => {
-    console.log(`Message from ${socket.id}: ${message}`);
-    io.emit("message", { text: message, senderId: socket.id });
-    const newMessage = new Message({ message });
-    newMessage.save();
-    console.log(`saved: ${newMessage}`);
+  console.log(`User connected: ${socket.userId}`);
+
+  userSockets.set(socket.userId.toString(), socket.id);
+
+  socket.on("private-message", async (data) => {
+    try {
+      const { receiverId, content, type } = data;
+      const senderId = socket.userId;
+
+      const newMessage = new Message({
+        senderId,
+        receiverId,
+        content: content.trim(),
+        type,
+        createdAt: new Date(),
+      });
+
+      await newMessage.save();
+
+      const receiverSocketId = userSockets.get(receiverId);
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit("new-message", newMessage);
+      }
+
+      socket.emit("message-sent", newMessage);
+    } catch (error) {
+      socket.emit("message-error", { error: "Failed to send message" });
+    }
   });
 
   socket.on("disconnect", () => {
-    console.log(`User disconnected: ${socket.id}`);
+    console.log(`User disconnected: ${socket.userId}`);
+    userSockets.delete(socket.userId.toString());
   });
 });
 
@@ -135,6 +181,7 @@ app.post("/messages", authenticateToken, async (req, res) => {
     });
   }
 });
+
 app.post("/register", async (req, res) => {
   try {
     const { email, password, username } = req.body;
@@ -208,7 +255,7 @@ app.post("/login", async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ error: "Please enter all fields" });
   }
-  const user = await Users.findOne({ email });
+  const user = await User.findOne({ email });
   if (!user) {
     return res.status(400).json({ error: "User does not exist" });
   }
