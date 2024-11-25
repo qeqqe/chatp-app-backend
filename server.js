@@ -7,7 +7,7 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const ConnectDB = require("./ConnectDB");
 const Message = require("./modles/dummyMessage");
-const Users = require("./modles/User");
+const User = require("./modles/User");
 const bcrypt = require("bcrypt");
 ConnectDB();
 require("dotenv").config();
@@ -38,7 +38,17 @@ io.on("connection", (socket) => {
   });
 });
 
-app.get("/messages", async (req, res) => {
+app.get("/users", async (req, res) => {
+  try {
+    const users = await User.find();
+    res.json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/get-messages", async (req, res) => {
   try {
     const messages = await Message.find().sort({ _id: -1 });
     res.json({ messages });
@@ -47,7 +57,84 @@ app.get("/messages", async (req, res) => {
     res.status(500).json({ messages: [], error: error.message });
   }
 });
+const authenticateToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.split(" ")[1];
 
+    if (!token) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Authentication required" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({ success: false, error: "Token expired" });
+    }
+    return res.status(403).json({ success: false, error: "Invalid token" });
+  }
+};
+
+app.post("/messages", authenticateToken, async (req, res) => {
+  try {
+    const { senderId, receiverId, content, type } = req.body;
+
+    if (!senderId || !receiverId || !content || !type) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields",
+      });
+    }
+
+    if (senderId !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        error: "Unauthorized sender",
+      });
+    }
+
+    const receiver = await User.findById(receiverId);
+    if (!receiver) {
+      return res.status(404).json({
+        success: false,
+        error: "Receiver not found",
+      });
+    }
+
+    const newMessage = new Message({
+      senderId,
+      receiverId,
+      content: content.trim(),
+      type,
+      createdAt: new Date(),
+    });
+
+    await newMessage.save();
+
+    io.to(receiverId).emit("new-message", newMessage);
+
+    return res.status(201).json({
+      success: true,
+      data: newMessage,
+    });
+  } catch (error) {
+    console.error("Error sending message:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error while sending message",
+    });
+  }
+});
 app.post("/register", async (req, res) => {
   try {
     const { email, password, username } = req.body;
@@ -74,7 +161,7 @@ app.post("/register", async (req, res) => {
       });
     }
 
-    const existingUser = await Users.findOne({ email });
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -85,7 +172,7 @@ app.post("/register", async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    const newUser = new Users({
+    const newUser = new User({
       email: email.toLowerCase(),
       password: hashedPassword,
       username: username.trim(),
@@ -117,7 +204,6 @@ app.post("/register", async (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
-  // <-- Fix parameter order here
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: "Please enter all fields" });
