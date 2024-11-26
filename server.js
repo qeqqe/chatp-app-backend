@@ -92,26 +92,49 @@ io.on("connection", (socket) => {
 
   socket.on("private-message", async (data) => {
     try {
-      const { receiverId, content, type } = data;
+      const { receiverId, content } = data;
       const senderId = socket.userId;
 
-      const newMessage = new Message({
-        senderId,
-        receiverId,
-        content: content.trim(),
-        type,
-        createdAt: new Date(),
-      });
-
-      await newMessage.save();
-
-      const receiverSocketId = userSockets.get(receiverId);
-      if (receiverSocketId) {
-        io.to(receiverSocketId).emit("new-message", newMessage);
+      const receiver = await User.findOne({ username: receiverId });
+      if (!receiver) {
+        socket.emit("message-error", { error: "Receiver not found" });
+        return;
       }
 
-      socket.emit("message-sent", newMessage);
+      const now = new Date();
+      const newMessage = new Message({
+        senderId: senderId,
+        receiverId: receiver._id,
+        message: content.trim(),
+        createdAt: now,
+      });
+
+      const savedMessage = await newMessage.save();
+
+      // Ensure we have a valid date before formatting
+      const messageTime =
+        savedMessage.createdAt instanceof Date
+          ? savedMessage.createdAt.toISOString()
+          : now.toISOString();
+
+      const messageFormat = {
+        _id: savedMessage._id,
+        sender: socket.username,
+        receiver: receiver.username,
+        message: savedMessage.message,
+        time: messageTime,
+        senderUsername: socket.username,
+        receiverUsername: receiver.username,
+      };
+
+      const receiverSocketId = userSockets.get(receiver._id.toString());
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit("new-message", messageFormat);
+      }
+
+      socket.emit("message-sent", messageFormat);
     } catch (error) {
+      console.error("Message error:", error);
       socket.emit("message-error", { error: "Failed to send message" });
     }
   });
@@ -151,7 +174,14 @@ app.get("/get-messages/:receiverId", authenticateToken, async (req, res) => {
     }).sort({ createdAt: 1 });
 
     const formattedMessages = messages.map((msg) => ({
-      ...msg.toObject(),
+      _id: msg._id,
+      sender: msg.senderId.toString(),
+      receiver: msg.receiverId.toString(),
+      message: msg.message,
+      time:
+        msg.createdAt instanceof Date
+          ? msg.createdAt.toISOString()
+          : new Date(msg.createdAt).toISOString(),
       senderUsername:
         msg.senderId.toString() === senderId.toString()
           ? req.user.username

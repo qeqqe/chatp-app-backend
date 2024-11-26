@@ -3,40 +3,29 @@ const mongoose = require("mongoose");
 const MessageSchema = new mongoose.Schema(
   {
     senderId: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
     receiverId: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
-    content: {
+    message: {
       type: String,
       required: true,
-      trim: true,
-    },
-    type: {
-      type: String,
-      enum: ["text", "image", "video", "audio"],
-      required: true,
-    },
-    status: {
-      type: String,
-      enum: ["sent", "delivered", "read"],
-      default: "sent",
     },
     createdAt: {
       type: Date,
-      default: Date.now,
+      default: () => new Date(),
+      get: (date) => date?.toISOString(),
     },
   },
   {
     timestamps: true,
+    toJSON: { getters: true },
   }
 );
-
-MessageSchema.index({ senderId: 1, receiverId: 1 });
 
 module.exports = mongoose.model("Message", MessageSchema);
