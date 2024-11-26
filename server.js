@@ -6,7 +6,7 @@ const server = http.createServer(app);
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const ConnectDB = require("./ConnectDB");
-const Message = require("./modles/dummyMessage");
+const Message = require("./modles/Messages");
 const User = require("./modles/User");
 const bcrypt = require("bcrypt");
 ConnectDB();
@@ -101,28 +101,20 @@ io.on("connection", (socket) => {
         return;
       }
 
-      const now = new Date();
       const newMessage = new Message({
         senderId: senderId,
         receiverId: receiver._id,
         message: content.trim(),
-        createdAt: now,
       });
 
       const savedMessage = await newMessage.save();
 
-      // Ensure we have a valid date before formatting
-      const messageTime =
-        savedMessage.createdAt instanceof Date
-          ? savedMessage.createdAt.toISOString()
-          : now.toISOString();
-
       const messageFormat = {
-        _id: savedMessage._id,
+        _id: savedMessage._id.toString(),
         sender: socket.username,
         receiver: receiver.username,
         message: savedMessage.message,
-        time: messageTime,
+        time: savedMessage.createdAt.toISOString(),
         senderUsername: socket.username,
         receiverUsername: receiver.username,
       };
@@ -159,6 +151,7 @@ app.get("/get-messages/:receiverId", authenticateToken, async (req, res) => {
   try {
     const senderId = req.user._id;
     const receiver = await User.findOne({ username: req.params.receiverId });
+
     if (!receiver) {
       return res.status(404).json({
         success: false,
@@ -174,14 +167,11 @@ app.get("/get-messages/:receiverId", authenticateToken, async (req, res) => {
     }).sort({ createdAt: 1 });
 
     const formattedMessages = messages.map((msg) => ({
-      _id: msg._id,
+      _id: msg._id.toString(),
       sender: msg.senderId.toString(),
       receiver: msg.receiverId.toString(),
       message: msg.message,
-      time:
-        msg.createdAt instanceof Date
-          ? msg.createdAt.toISOString()
-          : new Date(msg.createdAt).toISOString(),
+      time: msg.createdAt.toISOString(),
       senderUsername:
         msg.senderId.toString() === senderId.toString()
           ? req.user.username
