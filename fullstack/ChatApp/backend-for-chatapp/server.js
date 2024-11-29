@@ -3,10 +3,12 @@ const http = require("http");
 const socketIo = require("socket.io");
 const app = express();
 const server = http.createServer(app);
-
+const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const ConnectDB = require("./ConnectDB");
 const Message = require("./modles/dummyMessage");
+const Users = require("./modles/User");
+const bcrypt = require("bcrypt");
 ConnectDB();
 require("dotenv").config();
 app.use(express.json());
@@ -46,7 +48,102 @@ app.get("/messages", async (req, res) => {
   }
 });
 
-app.post("/login", (res, req) => {});
+app.post("/register", async (req, res) => {
+  try {
+    const { email, password, username } = req.body;
+
+    if (!email || !password || !username) {
+      return res.status(400).json({
+        success: false,
+        error: "Please enter all fields",
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid email format",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: "Password must be at least 6 characters long",
+      });
+    }
+
+    const existingUser = await Users.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        error: "User already exists",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const newUser = new Users({
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      username: username.trim(),
+      createdAt: new Date(),
+    });
+
+    await newUser.save();
+
+    const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET);
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        token,
+        user: {
+          id: newUser._id,
+          email: newUser.email,
+          username: newUser.username,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error during registration",
+    });
+  }
+});
+
+app.post("/login", async (req, res) => {
+  // <-- Fix parameter order here
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: "Please enter all fields" });
+  }
+  const user = await Users.findOne({ email });
+  if (!user) {
+    return res.status(400).json({ error: "User does not exist" });
+  }
+  try {
+    if (!(await bcrypt.compare(password, user.password))) {
+      return res.status(400).json({ error: "Invalid password" });
+    }
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username,
+      },
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server Error");
+  }
+});
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
