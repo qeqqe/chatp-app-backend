@@ -1,0 +1,256 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider        = "prisma-client-js"
+  // Add this line to ensure proper generation
+  previewFeatures = []
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String            @id @default(uuid())
+  email             String            @unique
+  username          String            @unique
+  password          String?
+  githubId          String?           @unique // Keep as String
+  authMethod        AuthMethod        @default(LOCAL)
+  githubToken       GithubToken?
+  githubProfile     GitHubProfile?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  auditLogs         AuditLog[]
+  migrations        Migration[]
+  migrationJobs     MigrationJob[]
+  uploadedFiles     UploadedFile[]
+  localRepositories LocalRepository[]
+}
+
+enum AuthMethod {
+  LOCAL
+  GITHUB
+}
+
+model GithubToken {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id])
+  accessToken String // encrypted
+  scopes      String[] // repo, admin, workflow
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model GitHubProfile {
+  id               String       @id @default(uuid())
+  userId           String       @unique
+  user             User         @relation(fields: [userId], references: [id])
+  login            String
+  githubId         Int          @unique
+  nodeId           String
+  avatarUrl        String
+  gravatarId       String?
+  url              String
+  htmlUrl          String
+  followersUrl     String
+  followingUrl     String
+  gistsUrl         String
+  starredUrl       String
+  subscriptionsUrl String
+  organizationsUrl String
+  reposUrl         String
+  eventsUrl        String
+  type             String
+  userViewType     String?
+  siteAdmin        Boolean      @default(false)
+  name             String?
+  company          String?
+  blog             String?
+  location         String?
+  email            String?
+  hireable         Boolean?
+  bio              String?
+  twitterUsername  String?
+  publicRepos      Int
+  publicGists      Int
+  followers        Int
+  following        Int
+  createdAt        DateTime
+  updatedAt        DateTime
+  repositories     Repository[]
+
+  @@index([login])
+}
+
+model Repository {
+  id                Int             @id @default(autoincrement())
+  name              String
+  fullName          String // owner/repo format
+  private           Boolean
+  defaultBranch     String
+  description       String?
+  homepage          String?
+  language          String?
+  visibility        String // public, private, internal
+  size              Int // size in KB 
+  hasIssues         Boolean         @default(true)
+  hasProjects       Boolean         @default(true)
+  hasWiki           Boolean         @default(true)
+  archived          Boolean         @default(false)
+  disabled          Boolean         @default(false)
+  fork              Boolean         @default(false)
+  htmlUrl           String
+  gitUrl            String?
+  sshUrl            String?
+  cloneUrl          String?
+  lastSynced        DateTime?
+  technologies      String[] // tech stack
+  analyzedAt        DateTime?
+  migrationEligible Boolean         @default(false)
+  migrationStatus   MigrationStatus @default(PENDING)
+  stargazersCount   Int             @default(0)
+  watchersCount     Int             @default(0)
+  forksCount        Int             @default(0)
+  openIssuesCount   Int             @default(0)
+  totalFiles        Int?
+  totalLines        Int?
+  affectedFiles     Int? // files that need migration
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  githubProfileId   String
+  githubProfile     GitHubProfile   @relation(fields: [githubProfileId], references: [id])
+  webhookId         Int?
+  webhookSecret     String? // encrypted
+  migrations        Migration[]
+  migrationJobs     MigrationJob[]
+
+  @@unique([githubProfileId, fullName])
+  @@index([fullName])
+  @@index([language])
+  @@index([migrationStatus])
+}
+
+enum MigrationStatus {
+  PENDING
+  ANALYZING
+  READY
+  MIGRATING
+  COMPLETED
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  resource  String // owner/repo or userId
+  metadata  Json // additional context
+  createdAt DateTime @default(now())
+
+  @@index([userId, action])
+}
+
+model Migration {
+  id                 String         @id @default(uuid())
+  name               String // like react 17 to 18 or anything else
+  description        String
+  type               String // framework, language, dependency
+  sourceVersion      String
+  targetVersion      String
+  compatibilityRules Json // rules for migration compatibility
+  steps              Json // migration steps and rules
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  repositoryId       Int
+  repository         Repository     @relation(fields: [repositoryId], references: [id])
+  userId             String
+  user               User           @relation(fields: [userId], references: [id])
+  jobs               MigrationJob[]
+
+  @@index([type])
+  @@index([repositoryId])
+}
+
+model MigrationJob {
+  id           String     @id @default(uuid())
+  status       JobStatus  @default(PENDING)
+  progress     Float      @default(0) // 0-100%
+  logs         Json[] // array of log entries
+  result       Json? // migration results and changes
+  error        String? // error message
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  repositoryId Int
+  repository   Repository @relation(fields: [repositoryId], references: [id])
+  migrationId  String
+  migration    Migration  @relation(fields: [migrationId], references: [id])
+  userId       String
+  user         User       @relation(fields: [userId], references: [id])
+  filesChanged Json[] // array of changed file paths and diffs
+
+  @@index([status])
+  @@index([userId])
+  @@index([repositoryId])
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model UploadedFile {
+  id         String   @id @default(cuid())
+  name       String
+  path       String
+  size       Int
+  mimeType   String
+  status     String
+  uploadedAt DateTime @default(now())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId]) // index for better performance
+  @@map("uploaded_files")
+}
+
+model LocalRepository {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  files       LocalFile[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([userId, name])
+  @@map("local_repositories")
+}
+
+model LocalFile {
+  id                String          @id @default(cuid())
+  name              String
+  path              String
+  content           String? // For text files
+  size              Int
+  mimeType          String
+  parentPath        String? // For nested directory structure
+  localRepositoryId String
+  localRepository   LocalRepository @relation(fields: [localRepositoryId], references: [id], onDelete: Cascade)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([localRepositoryId, path])
+  @@map("local_files")
+}
